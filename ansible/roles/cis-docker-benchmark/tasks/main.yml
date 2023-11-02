@@ -1,0 +1,583 @@
+# code: language=ansible
+---
+#
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this
+# software and associated documentation files (the "Software"), to deal in the Software
+# without restriction, including without limitation the rights to use, copy, modify,
+# merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+# PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#
+
+# tasks file for cis-docker-benchmark
+# Following three tasks are created to load audit rules with delay
+# Docker service tends to run after audit service and audit service
+- name: Create augenrules-load.service file
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/augenrules-load.service
+    content: |
+      [Unit]
+      Description=Load audit rules with augenrules
+      [Service]
+      Type=oneshot
+      ExecStart=/sbin/augenrules --load
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Create augenrules-load.timer file
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/augenrules-load.timer
+    content: |
+      [Unit]
+      Description=Timer for augenrules service
+      [Timer]
+      OnBootSec=1min
+      Unit=augenrules-load.service
+      [Install]
+      WantedBy=multi-user.target
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Reload systemd manager configuration
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Enable augenrules-load.timer
+  ansible.builtin.systemd:
+    name: augenrules-load.timer
+    enabled: true
+
+# 1.1.1 Ensure a separate partition for containers has been created
+# Done by EC2 Image Pipeline.
+
+# 1.1.2 Ensure only trusted users are allowed to control Docker daemon
+# Should be covered by compensating controls. Users should not have access to ECS hosts.
+- name: Creating audit file
+  ansible.builtin.file:
+    path: /etc/audit/rules.d/cis.rules
+    state: touch
+    mode: 0644
+  tags:
+    - rule_1.1.2
+
+- name: 1.1.3 Ensure auditing is configured for the Docker daemon
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/cis.rules
+    line: "-w /usr/bin/dockerd -k docker"
+    state: present
+  tags:
+    - Level1Host
+    - rule_1.1.3
+
+- name: 1.1.4 Ensure auditing is configured for Docker files and directories - /run/containerd
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/cis.rules
+    line: "-a exit,always -F path=/run/containerd -F perm=war -k docker"
+    state: present
+  tags:
+    - Level2Host
+    - rule_1.1.4
+
+- name: 1.1.5 Ensure auditing is configured for Docker files and directories - /var/lib/docker
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/cis.rules
+    line: "-a exit,always -F path=/var/lib/docker -F perm=war -k docker"
+    state: present
+  tags:
+    - Level2Host
+    - rule_1.1.5
+
+- name: 1.1.6 Ensure auditing is configured for Docker files and directories - /etc/docker
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/cis.rules
+    line: "-w /etc/docker -k docker"
+    state: present
+  tags:
+    - Level1Host
+    - rule_1.1.6
+
+- name: Pre 1.1.7 getting /usr/lib/systemd/system/docker.service stat
+  ansible.builtin.stat:
+    path: /usr/lib/systemd/system/docker.service
+  register: docker_service
+  tags:
+    - Level1Host
+    - rule_1.1.7
+
+- name: 1.1.7 Ensure auditing is configured for Docker files and directories - docker.service
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/cis.rules
+    line: "-w /usr/lib/systemd/system/docker.service -k docker"
+    state: present
+  when: docker_service.stat.exists
+  tags:
+    - Level1Host
+    - rule_1.1.7
+
+- name: Pre 1.1.8 getting /run/containerd/containerd.sock stat
+  ansible.builtin.stat:
+    path: /run/containerd/containerd.sock
+  register: containerd_sock
+  tags:
+    - Level1Host
+    - rule_1.1.8
+
+- name: 1.1.8 Ensure auditing is configured for Docker files and directories - containerd.sock
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/cis.rules
+    line: "-w /run/containerd/containerd.sock -k docker"
+    state: present
+  when: containerd_sock.stat.exists
+  tags:
+    - Level1Host
+    - rule_1.1.8
+
+- name: Pre 1.1.9 getting /var/run/docker.sock stat
+  ansible.builtin.stat:
+    path: /var/run/docker.sock
+  register: docker_sock
+  tags:
+    - Level1Host
+    - rule_1.1.9
+
+- name: 1.1.9 Ensure auditing is configured for Docker files and directories - docker.socket
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/cis.rules
+    line: "-w /var/run/docker.sock -k docker"
+    state: present
+  when: docker_sock.stat.exists
+  tags:
+    - Level1Host
+    - rule_1.1.9
+
+- name: Pre 1.1.9 (2nd check) getting /var/run/docker.sock stat
+  ansible.builtin.stat:
+    path: /run/docker.sock
+  register: run_docker_sock
+  tags:
+    - Level1Host
+    - rule_1.1.9
+
+- name: 1.1.9 (2nd check) Ensure auditing is configured for Docker files and directories - docker.socket
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/cis.rules
+    line: "-w /run/docker.sock -k docker"
+    state: present
+  when: run_docker_sock.stat.exists
+  tags:
+    - Level1Host
+    - rule_1.1.9
+
+- name: Pre 1.1.10 getting /etc/default/docker stat
+  ansible.builtin.stat:
+    path: /etc/default/docker
+  register: default_docker
+  tags:
+    - Level1Host
+    - rule_1.1.10
+
+- name: 1.1.10 Ensure auditing is configured for Docker files and directories - /etc/default/docker
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/cis.rules
+    line: "-w /etc/default/docker -k docker "
+    state: present
+  when: default_docker.stat.exists
+  tags:
+    - Level1Host
+    - rule_1.1.10
+
+- name: 1.1.11 Ensure auditing is configured for Docker files and directories - /etc/docker/daemon.json
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/cis.rules
+    line: "-w /etc/docker/daemon.json -k docker"
+    state: present
+  tags:
+    - Level1Host
+    - rule_1.1.11
+
+- name: Pre 1.1.12 getting /etc/containerd/config.toml stat
+  ansible.builtin.stat:
+    path: /etc/containerd/config.toml
+  register: config_toml
+  tags:
+    - Level1Host
+    - rule_1.1.12
+
+- name: 1.1.12 Ensure auditing is configured for Docker files and directories - /etc/containerd/config.toml
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/cis.rules
+    line: "-w /etc/containerd/config.toml -k docker"
+    state: present
+  when: config_toml.stat.exists
+  tags:
+    - Level1Host
+    - rule_1.1.12
+
+- name: Pre 1.1.13 getting /etc/sysconfig/docker stat
+  ansible.builtin.stat:
+    path: /etc/sysconfig/docker
+  register: sysconfig_docker
+  tags:
+    - Level1Host
+    - rule_1.1.13
+
+- name: 1.1.13 Ensure auditing is configured for Docker files and directories - /etc/sysconfig/docker
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/cis.rules
+    line: "-w /etc/sysconfig/docker -k docker"
+    state: present
+  when: sysconfig_docker.stat.exists
+  tags:
+    - Level1Host
+    - rule_1.1.13
+
+- name: Pre 1.1.14 getting /usr/bin/containerd stat
+  ansible.builtin.stat:
+    path: /usr/bin/containerd
+  register: bin_containerd
+  tags:
+    - Level1Host
+    - rule_1.1.14
+
+- name: 1.1.14 Ensure auditing is configured for Docker files and directories - /usr/bin/containerd
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/cis.rules
+    line: "-w /usr/bin/containerd -k docker"
+    state: present
+  when: bin_containerd.stat.exists
+  tags:
+    - Level1Host
+    - rule_1.1.14
+
+- name: Pre 1.1.15 getting /usr/bin/containerd-shim stat
+  ansible.builtin.stat:
+    path: /usr/bin/containerd-shim
+  register: bin_containerd_shim
+  tags:
+    - Level1Host
+    - rule_1.1.15
+
+- name: 1.1.15 Ensure auditing is configured for Docker files and directories - /usr/bin/containerd-shim
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/cis.rules
+    line: "-w /usr/bin/containerd-shim -k docker"
+    state: present
+  when: bin_containerd_shim.stat.exists
+  tags:
+    - Level1Host
+    - rule_1.1.15
+
+- name: Pre 1.1.16 getting /usr/bin/containerd-shim-runc-v1 stat
+  ansible.builtin.stat:
+    path: /usr/bin/containerd-shim-runc-v1
+  register: containerd_shim_runc_v1
+  tags:
+    - Level1Host
+    - rule_1.1.16
+
+- name: 1.1.16 Ensure auditing is configured for Docker files and directories - /usr/bin/containerd-shim-runc-v1
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/cis.rules
+    line: "-w /usr/bin/containerd-shim-runc-v1 -k docker"
+    state: present
+  when: containerd_shim_runc_v1.stat.exists
+  tags:
+    - Level1Host
+    - rule_1.1.16
+
+- name: Pre 1.1.17 getting /usr/bin/containerd-shim-runc-v2  stat
+  ansible.builtin.stat:
+    path: /usr/bin/containerd-shim-runc-v2
+  register: containerd_shim_runc_v2
+  tags:
+    - Level1Host
+    - rule_1.1.17
+
+- name: 1.1.17 Ensure auditing is configured for Docker files and directories - /usr/bin/containerd-shim-runc-v2
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/cis.rules
+    line: "-w /usr/bin/containerd-shim-runc-v2 -k docker"
+    state: present
+  when: containerd_shim_runc_v2.stat.exists
+  tags:
+    - Level1Host
+    - rule_1.1.17
+
+- name: Pre 1.1.18 getting /usr/bin/runc stat
+  ansible.builtin.stat:
+    path: /usr/bin/runc
+  register: bin_runc
+  tags:
+    - Level1Host
+    - rule_1.1.18
+
+- name: 1.1.18 Ensure auditing is configured for Docker files and directories - /usr/bin/runc
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/cis.rules
+    line: "-w /usr/bin/runc -k docker"
+    state: present
+  when: bin_runc.stat.exists
+  tags:
+    - Level1Host
+    - rule_1.1.18
+
+# 1.2.1 Ensure the container host has been Hardened
+# Consider compensating control. This is a general requirement.
+
+# 1.2.2 Ensure that the version of Docker is up to date
+# Managed by AWS (this role is applied to ECS optimized images where docker is pre-installed)
+
+
+## 2 - Docker daemon configuration
+
+### List of section 2 benchmarks not implemented in this role
+# 2.1 Run the Docker daemon as a non-root user, if possible
+# This control needs to be implemented per business requierements basis.
+# 2.4 Ensure Docker is allowed to make changes to iptables
+# Managed by ECS
+# 2.5 Ensure insecure registries are not used
+# Use other compensating controls.
+# 2.6 Ensure aufs storage driver is not used
+# ESC optimized images use overlay2 for storage drive.
+# 2.7 Ensure TLS authentication for Docker daemon is configured
+# Docker daemon should not be exposed via a network socket, use compensating controls.
+# 2.9 Enable user namespace support
+# Varies based on business requirements, consult docker documentations.
+# 2.10 Ensure the default cgroup usage has been confirmed
+# ECS optimized image does not have --cgroup-parent set by default.
+# 2.12 Ensure that authorization for Docker client commands is enabled
+# Varies based on business requirements, consult docker documentations.
+# 2.17 Ensure that a daemon-wide custom seccomp profile is applied if appropriate (Level 2 - Docker - Linux)
+# Not supported by ECS. Covered in OPA policies.
+# 2.18 Ensure that experimental features are not implemented in production
+# Not supported by ECS.
+
+
+# Section 2 and 3 common tasks
+## Following tasks cover below items:
+# 2.2 Ensure network traffic is restricted between containers on the default bridge
+# Addressed on daemon.json
+# 2.3 Ensure the logging level is set to 'info'
+# Addressed on daemon.json
+# 2.8 Ensure the default ulimit is configured appropriately
+# Addressed on daemon.json
+# 2.11 Ensure base device size is not changed until needed (Level 2 - Docker - Linux)
+# Addressed on daemon.json
+# 2.13 Ensure centralized and remote logging is configured (Level 2 - Docker - Linux)
+# Addressed on daemon.json - Cover by other controls
+# 2.14 Ensure containers are restricted from acquiring new privileges
+# Addressed on daemon.json
+# 2.15 Ensure live restore is enabled
+# Addressed on daemon.json
+# 2.16 Ensure Userland Proxy is Disabled
+# Addressed on daemon.json
+# 3.5 Ensure that the /etc/docker directory ownership is set to root:root
+# 3.6 Ensure that /etc/docker directory permissions are set to 755 or more restrictively
+# 3.17 Ensure that the daemon.json file ownership is set to root:root
+# 3.18 Ensure that daemon.json file permissions are set to 644 or more restrictive
+- name: Create Docker configuration file directory if it does not exist
+  ansible.builtin.file:
+    path: /etc/docker
+    owner: root
+    group: root
+    mode: 0755
+    state: directory
+  tags:
+    - daemon_config
+    - Level1Host
+    - Level1Docker
+
+- name: Copy Docker configuration into /etc/docker/daemon.json, backing up the original if it differs from the copied version (Level 1)
+  ansible.builtin.copy:
+    src: files/level1/daemon.json
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: 0644
+    backup: true
+  tags:
+    - daemon_config
+    - Level1Host
+    - Level1Docker
+  when: profile_level == "level1"
+
+- name: Copy Docker configuration into /etc/docker/daemon.json, backing up the original if it differs from the copied version (Level 2)
+  ansible.builtin.copy:
+    src: files/level2/daemon.json
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: 0644
+    backup: true
+  tags:
+    - daemon_config
+    - Level1Host
+    - Level2Docker
+  when: profile_level == "level2"
+
+# 3 - Docker daemon configuration files
+### List of section 3 benchmarks not implemented in this role
+# 3.7 Ensure that registry certificate file ownership is set to root:root
+# 3.8 Ensure that registry certificate file permissions are set to 444 or more restrictively
+# Fresh image does not have any registries.
+# 3.9 Ensure that TLS CA certificate file ownership is set to root:root
+# 3.10 Ensure that TLS CA certificate file permissions are set to 444 or more restrictively
+# 3.11 Ensure that Docker server certificate file ownership is set to root:root
+# 3.12 Ensure that the Docker server certificate file permissions are set to 444 or more restrictively
+# 3.13 Ensure that the Docker server certificate key file ownership is set to root:root
+# 3.14 Ensure that the Docker server certificate key file permissions are set to 400
+# Docker daemon should not be accessed remotely. Use other controls like SGs.
+
+- name: Pre 3.1 & 3.2 Finding docker.service file path
+  ansible.builtin.systemd:
+    name: docker.service
+  register: docker_service_info
+  tags:
+    - Level1Docker
+    - rule_3.1
+    - rule_3.2
+
+- name: 3.1 & 3.2 Setting docker.service file ownership and appropriate permissions
+  ansible.builtin.file:
+    path: "{{ docker_service_info.status.FragmentPath }}"
+    state: file
+    owner: root
+    group: root
+    mode: 0644
+  tags:
+    - Level1Docker
+    - rule_3.1
+    - rule_3.2
+
+- name: Pre 3.3 & 3.4 Finding docker.socket file path
+  ansible.builtin.systemd:
+    name: docker.socket
+  register: docker_socket_info
+  tags:
+    - Level1Docker
+    - rule_3.3
+    - rule_3.4
+
+- name: 3.3 & 3.4 Setting docker.socket file ownership and appropriate permissions
+  ansible.builtin.file:
+    path: "{{ docker_socket_info.status.FragmentPath }}"
+    state: file
+    owner: root
+    group: root
+    mode: 0644
+  tags:
+    - Level1Docker
+    - rule_3.3
+    - rule_3.4
+
+- name: Pre 3.15 & 3.16 Setting docker.socket (/var/run/docker.sock) file ownership and appropriate permissions
+  ansible.builtin.stat:
+    path: /var/run/docker.sock
+  register: docker_socket_var
+  tags:
+    - Level1Docker
+    - rule_3.3.15
+    - rule_3.3.16
+
+- name: 3.15 & 3.16 Setting docker.socket (/var/run/docker.sock) file ownership and appropriate permissions
+  ansible.builtin.file:
+    path: /var/run/docker.sock
+    state: file
+    owner: root
+    group: docker
+    mode: 0660
+  when: docker_socket_var.stat.exists
+  tags:
+    - Level1Docker
+    - rule_3.3.15
+    - rule_3.3.16
+
+- name: Pre 3.19 & 3.20 Setting /etc/default/docker file ownership and appropriate permissions
+  ansible.builtin.stat:
+    path: /etc/default/docker
+  register: docker_config
+  tags:
+    - Level1Docker
+    - rule_3.3.19
+    - rule_3.3.20
+
+- name: 3.19 & 3.20 Setting /etc/default/docker file ownership and appropriate permissions
+  ansible.builtin.file:
+    path: /etc/default/docker
+    state: file
+    owner: root
+    group: root
+    mode: 0644
+  when: docker_config.stat.exists
+  tags:
+    - Level1Docker
+    - rule_3.3.19
+    - rule_3.3.20
+
+- name: Pre 3.21 & 3.22 Setting /etc/sysconfig/docker file ownership and appropriate permissions
+  ansible.builtin.stat:
+    path: /etc/sysconfig/docker
+  register: sysconfig_docker_file
+  tags:
+    - Level1Docker
+    - rule_3.3.21
+    - rule_3.3.22
+
+- name: 3.21 & 3.22 Setting /etc/sysconfig/docker file ownership and appropriate permissions
+  ansible.builtin.file:
+    path: /etc/sysconfig/docker
+    state: file
+    owner: root
+    group: root
+    mode: 0644
+  when: sysconfig_docker_file.stat.exists
+  tags:
+    - Level1Docker
+    - rule_3.3.21
+    - rule_3.3.22
+
+- name: Pre 3.23 & 3.24 Setting Containerd socket file ownership and appropriate permissions
+  ansible.builtin.stat:
+    path: /run/containerd/containerd.sock
+  register: containerd_sock_info
+  tags:
+    - Level1Docker
+    - rule_3.3.23
+    - rule_3.3.24
+
+- name: 3.3.23 & 3.24 Setting Containerd socket file ownership and appropriate permissions
+  ansible.builtin.file:
+    path: /run/containerd/containerd.sock
+    state: file
+    owner: root
+    group: root
+    mode: 0660
+  when: containerd_sock_info.stat.exists
+  tags:
+    - Level1Docker
+    - rule_3.3.23
+    - rule_3.3.24
+
+# 4 - Container Images and Build File Configuration
+
+- name: 4.5 Ensure Content trust for Docker is Enabled
+  ansible.builtin.copy:
+    dest: /etc/profile.d/docker_trust.sh
+    content: |
+      #!/bin/sh
+      export DOCKER_CONTENT_TRUST=1
+    mode: 0755
+  tags:
+    - Level2Docker
+    - rule_4.5

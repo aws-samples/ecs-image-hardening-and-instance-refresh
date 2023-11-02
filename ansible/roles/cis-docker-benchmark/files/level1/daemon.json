@@ -1,0 +1,10 @@
+{
+    "experimental": false,
+    "icc": false,
+    "iptables": true,
+    "live-restore": true,
+    "log-driver": "json-file",
+    "log-level": "info",
+    "no-new-privileges": false,
+    "userland-proxy": false
+}
